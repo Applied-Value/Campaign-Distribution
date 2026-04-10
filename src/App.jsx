@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import * as XLSX from "xlsx";
 import { supabase } from "./lib/supabase";
 import {
   getContactCount,
@@ -7,6 +8,26 @@ import {
   getCampaignContactCount,
   checkConnection,
 } from "./lib/db";
+
+/* ── Download / Upload helpers ───────────────────────────── */
+
+function downloadCampaignTemplate() {
+  const headers = [["Full Name", "First Name", "Last Name", "Title", "Company", "Email", "Phone", "Distribution", "Outreach Method", "Email Type"]];
+  const ws = XLSX.utils.aoa_to_sheet(headers);
+  ws["!cols"] = headers[0].map(() => ({ wch: 20 }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Campaign Contacts");
+  XLSX.writeFile(wb, "campaign_template.xlsx");
+}
+
+function downloadSalesloftExport() {
+  const headers = [["Full Name", "Email", "Title", "Company", "Phone", "Campaign", "Distribution", "Outreach Method"]];
+  const ws = XLSX.utils.aoa_to_sheet(headers);
+  ws["!cols"] = headers[0].map(() => ({ wch: 20 }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Salesloft Export");
+  XLSX.writeFile(wb, "salesloft_export.xlsx");
+}
 
 /* ── Icons (inline SVG, no deps) ─────────────────────────── */
 
@@ -26,8 +47,22 @@ const icons = {
       <line x1="12" y1="3" x2="12" y2="15" />
     </svg>
   ),
+  uploadSm: (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" y1="3" x2="12" y2="15" />
+    </svg>
+  ),
   download: (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  ),
+  downloadSm: (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <polyline points="7 10 12 15 17 10" />
       <line x1="12" y1="15" x2="12" y2="3" />
@@ -38,11 +73,6 @@ const icons = {
       <polyline points="23 4 23 10 17 10" />
       <polyline points="1 20 1 14 7 14" />
       <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-    </svg>
-  ),
-  arrowLeft: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
     </svg>
   ),
   arrowRight: (
@@ -61,6 +91,11 @@ const icons = {
       <ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
     </svg>
   ),
+  check: (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  ),
 };
 
 const ACTIONS = [
@@ -76,6 +111,8 @@ const ACTIONS = [
     statKey: "contacts",
     statLabel: "contacts in database",
     step: 1,
+    actionType: "download",
+    actionLabel: "Download Contacts",
   },
   {
     id: "upload-revisions",
@@ -90,6 +127,9 @@ const ACTIONS = [
     statKey: "assignments",
     statLabel: "active assignments",
     step: 2,
+    actionType: "upload",
+    actionLabel: "Select File",
+    accept: ".xlsx,.xls,.csv",
   },
   {
     id: "download-salesloft",
@@ -104,6 +144,8 @@ const ACTIONS = [
     statKey: "campaigns",
     statLabel: "campaigns",
     step: 3,
+    actionType: "download",
+    actionLabel: "Download Salesloft File",
   },
   {
     id: "upload-bounce",
@@ -118,18 +160,20 @@ const ACTIONS = [
     statKey: "bounces",
     statLabel: "pending bounces",
     step: 4,
+    actionType: "upload",
+    actionLabel: "Select File",
+    accept: "*",
   },
 ];
 
 /* ── Step 1 structured description ───────────────────────── */
 
-function StartCampaignDesc({ compact = false }) {
-  const fs = compact ? 12 : 14;
-  const ol = { margin: 0, paddingLeft: compact ? 16 : 20, listStyleType: "decimal" };
-  const li = { marginBottom: compact ? 3 : 5, lineHeight: compact ? 1.55 : 1.65 };
-  const sub = { margin: "3px 0 0", paddingLeft: compact ? 14 : 18, listStyleType: "lower-alpha" };
+function StartCampaignDesc() {
+  const ol = { margin: 0, paddingLeft: 16, listStyleType: "decimal" };
+  const li = { marginBottom: 3, lineHeight: 1.55 };
+  const sub = { margin: "3px 0 0", paddingLeft: 14, listStyleType: "lower-alpha" };
   return (
-    <div style={{ fontSize: fs, color: "var(--color-text-secondary)" }}>
+    <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
       <ol style={ol}>
         <li style={li}>Downloads latest contact list from Salesforce</li>
         <li style={li}>
@@ -147,7 +191,7 @@ function StartCampaignDesc({ compact = false }) {
 
 /* ── Arrow connector between steps ───────────────────────── */
 
-function StepArrow({ cycle = false }) {
+function StepArrow() {
   return (
     <div style={{
       display: "flex",
@@ -157,7 +201,7 @@ function StepArrow({ cycle = false }) {
       flexShrink: 0,
       padding: "0 2px",
     }}>
-      {cycle ? icons.arrowCurve : icons.arrowRight}
+      {icons.arrowRight}
     </div>
   );
 }
@@ -206,10 +250,36 @@ function ConnectionBadge({ loading, configured, connected, stats }) {
 /* ── Main App ────────────────────────────────────────────── */
 
 export default function App() {
-  const [activeAction, setActiveAction] = useState(null);
   const [connected, setConnected] = useState(false);
   const [stats, setStats] = useState({ contacts: null, campaigns: null, assignments: null, bounces: null });
   const [loading, setLoading] = useState(true);
+  const [uploadedFiles, setUploadedFiles] = useState({});
+  const fileInputRefs = useRef({});
+  const activeUploadId = useRef(null);
+
+  const triggerUpload = (actionId, accept) => {
+    activeUploadId.current = actionId;
+    const input = fileInputRefs.current[actionId];
+    if (input) {
+      input.value = "";
+      input.accept = accept;
+      input.click();
+    }
+  };
+
+  const handleFileSelected = (e) => {
+    const file = e.target.files[0];
+    if (!file || !activeUploadId.current) return;
+    setUploadedFiles((prev) => ({
+      ...prev,
+      [activeUploadId.current]: { name: file.name, size: file.size },
+    }));
+  };
+
+  const handleDownload = (actionId) => {
+    if (actionId === "start-campaign") downloadCampaignTemplate();
+    if (actionId === "download-salesloft") downloadSalesloftExport();
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -228,9 +298,8 @@ export default function App() {
     }
     load();
     return () => { cancelled = true; };
-  }, [activeAction]);
+  }, []);
 
-  const active = ACTIONS.find((a) => a.id === activeAction);
   const configured = !!supabase;
 
   return (
@@ -242,7 +311,6 @@ export default function App() {
           border: 1px solid var(--color-border-primary);
           border-radius: var(--border-radius-xl);
           padding: 1.25rem 1.25rem 1rem;
-          cursor: pointer;
           transition: all 0.2s ease;
           box-shadow: var(--shadow-sm);
           overflow: hidden;
@@ -251,50 +319,36 @@ export default function App() {
           display: flex;
           flex-direction: column;
         }
-        .step-card::before {
-          content: '';
-          position: absolute;
-          top: 0; left: 0; right: 0;
-          height: 3px;
-          border-radius: var(--border-radius-xl) var(--border-radius-xl) 0 0;
-          transition: height 0.2s ease;
-        }
-        .step-card:hover {
-          transform: translateY(-3px);
-          box-shadow: var(--shadow-card-hover);
-          border-color: var(--color-border-secondary);
-        }
-        .step-card:hover::before { height: 4px; }
-        .step-card:active { transform: translateY(-1px); }
-
         .pipeline-row {
           display: flex;
           align-items: stretch;
           gap: 0;
         }
-
-        .btn-back {
+        .action-btn {
           display: inline-flex;
           align-items: center;
           gap: 6px;
           cursor: pointer;
           font-family: var(--font-sans);
-          font-size: 13px;
-          font-weight: 500;
-          padding: 8px 16px;
+          font-size: 12px;
+          font-weight: 600;
+          padding: 8px 14px;
           border-radius: var(--border-radius-md);
-          border: 1px solid var(--color-border-primary);
-          background: var(--color-background-primary);
-          color: var(--color-text-secondary);
-          box-shadow: var(--shadow-sm);
+          border: none;
+          color: #fff;
           transition: all 0.15s ease;
+          white-space: nowrap;
+          width: 100%;
+          justify-content: center;
         }
-        .btn-back:hover {
-          background: var(--color-background-secondary);
-          color: var(--color-text-primary);
+        .action-btn:hover {
+          opacity: 0.88;
+          transform: translateY(-1px);
           box-shadow: var(--shadow-md);
         }
-
+        .action-btn:active {
+          transform: translateY(0);
+        }
         .fade-in { animation: fadeInUp 0.4s ease both; }
         .fade-in-1 { animation-delay: 0.0s; }
         .fade-in-2 { animation-delay: 0.07s; }
@@ -330,7 +384,7 @@ export default function App() {
       </div>
 
       {/* ── Setup banner ── */}
-      {!configured && !activeAction && (
+      {!configured && (
         <div style={{
           background: "var(--color-background-info)",
           border: "1px solid var(--color-border-info)",
@@ -350,214 +404,156 @@ export default function App() {
       )}
 
       {/* ── Pipeline: cards + arrows ── */}
-      {!activeAction && (
-        <>
-          <div className="pipeline-row">
-            {ACTIONS.map((action, i) => {
-              const count = stats[action.statKey];
-              const isLast = i === ACTIONS.length - 1;
-              return (
-                <div key={action.id} style={{ display: "contents" }}>
-                  {/* Card */}
-                  <div
-                    className={`step-card fade-in fade-in-${i + 1}`}
-                    onClick={() => setActiveAction(action.id)}
-                  >
-                    {/* Accent bar */}
-                    <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: action.accent, borderRadius: "var(--border-radius-xl) var(--border-radius-xl) 0 0" }} />
+      <div className="pipeline-row">
+        {ACTIONS.map((action, i) => {
+          const count = stats[action.statKey];
+          const isLast = i === ACTIONS.length - 1;
+          const uploaded = uploadedFiles[action.id];
+          return (
+            <div key={action.id} style={{ display: "contents" }}>
+              {/* Card */}
+              <div className={`step-card fade-in fade-in-${i + 1}`}>
+                {/* Accent bar */}
+                <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: action.accent, borderRadius: "var(--border-radius-xl) var(--border-radius-xl) 0 0" }} />
 
-                    {/* Step number + icon */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                      <div style={{
-                        width: 38, height: 38,
-                        borderRadius: "var(--border-radius-md)",
-                        background: action.accentLight,
-                        color: action.accent,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        flexShrink: 0,
-                      }}>
-                        {action.icon}
-                      </div>
-                      <span style={{
-                        fontSize: 11, fontWeight: 600,
-                        color: action.accent,
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                      }}>
-                        Step {action.step}
-                      </span>
-                    </div>
-
-                    {/* Title */}
-                    <p style={{ fontSize: 15, fontWeight: 600, margin: "0 0 4px", color: "var(--color-text-primary)" }}>
-                      {action.title}
-                    </p>
-
-                    {/* Owner */}
-                    <p style={{ fontSize: 11, fontWeight: 500, color: "var(--color-text-tertiary)", margin: "0 0 10px", textTransform: "uppercase", letterSpacing: "0.03em" }}>
-                      Owner: {action.owner}
-                    </p>
-
-                    {/* Description */}
-                    <div style={{ fontSize: 12, color: "var(--color-text-secondary)", lineHeight: 1.6, flex: 1 }}>
-                      {action.descriptionJSX ? (
-                        <StartCampaignDesc compact />
-                      ) : (
-                        action.description.map((line, j) => (
-                          <div key={j} style={{ marginBottom: j < action.description.length - 1 ? 2 : 0 }}>{line}</div>
-                        ))
-                      )}
-                    </div>
-
-                    {/* Stats */}
-                    {connected && count !== null && (
-                      <div style={{
-                        display: "flex", alignItems: "center", gap: 5,
-                        fontSize: 11, color: "var(--color-text-tertiary)",
-                        margin: "12px 0 0",
-                        paddingTop: 10,
-                        borderTop: "1px solid var(--color-border-primary)",
-                      }}>
-                        {icons.database}
-                        <span>{count} {action.statLabel}</span>
-                      </div>
-                    )}
+                {/* Step number + icon */}
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                  <div style={{
+                    width: 38, height: 38,
+                    borderRadius: "var(--border-radius-md)",
+                    background: action.accentLight,
+                    color: action.accent,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    flexShrink: 0,
+                  }}>
+                    {action.icon}
                   </div>
+                  <span style={{
+                    fontSize: 11, fontWeight: 600,
+                    color: action.accent,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.05em",
+                  }}>
+                    Step {action.step}
+                  </span>
+                </div>
 
-                  {/* Horizontal arrow (desktop) */}
-                  {!isLast && (
-                    <div className="pipeline-arrow-h" style={{ display: "flex", alignItems: "center", padding: "0 6px", flexShrink: 0 }}>
-                      <StepArrow />
-                    </div>
-                  )}
+                {/* Title */}
+                <p style={{ fontSize: 15, fontWeight: 600, margin: "0 0 4px", color: "var(--color-text-primary)" }}>
+                  {action.title}
+                </p>
 
-                  {/* Vertical arrow (mobile) */}
-                  {!isLast && (
-                    <div className="pipeline-arrow-v" style={{ display: "none", justifyContent: "center", padding: "6px 0", transform: "rotate(90deg)" }}>
-                      <StepArrow />
-                    </div>
+                {/* Owner */}
+                <p style={{ fontSize: 11, fontWeight: 500, color: "var(--color-text-tertiary)", margin: "0 0 10px", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                  Owner: {action.owner}
+                </p>
+
+                {/* Description */}
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", lineHeight: 1.6, flex: 1 }}>
+                  {action.descriptionJSX ? (
+                    <StartCampaignDesc />
+                  ) : (
+                    action.description.map((line, j) => (
+                      <div key={j} style={{ marginBottom: j < action.description.length - 1 ? 2 : 0 }}>{line}</div>
+                    ))
                   )}
                 </div>
-              );
-            })}
-          </div>
 
-          {/* Cycle arrow: step 4 → step 1 */}
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 8,
-            marginTop: 20,
-            color: "var(--color-text-tertiary)",
-            fontSize: 12,
-            animation: "fadeIn 0.6s ease 0.3s both",
-          }}>
-            {icons.arrowCurve}
-            <span>Cycle repeats — updated contacts feed back into the next campaign</span>
-          </div>
-        </>
-      )}
+                {/* Action button */}
+                <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--color-border-primary)" }}>
+                  {action.actionType === "download" && (
+                    <button
+                      className="action-btn"
+                      style={{ background: action.accent }}
+                      onClick={() => handleDownload(action.id)}
+                    >
+                      {icons.downloadSm}
+                      {action.actionLabel}
+                    </button>
+                  )}
 
-      {/* ── Active action detail ── */}
-      {activeAction && active && (
-        <div style={{ animation: "fadeInUp 0.3s ease" }}>
-          <button className="btn-back" onClick={() => setActiveAction(null)}>
-            {icons.arrowLeft}
-            Back to pipeline
-          </button>
+                  {action.actionType === "upload" && (
+                    <>
+                      <button
+                        className="action-btn"
+                        style={{ background: action.accent }}
+                        onClick={() => triggerUpload(action.id, action.accept)}
+                      >
+                        {icons.uploadSm}
+                        {action.actionLabel}
+                      </button>
+                      <input
+                        type="file"
+                        ref={(el) => { fileInputRefs.current[action.id] = el; }}
+                        onChange={handleFileSelected}
+                        style={{ display: "none" }}
+                      />
+                      {uploaded && (
+                        <div style={{
+                          display: "flex", alignItems: "center", gap: 5,
+                          marginTop: 8, padding: "6px 10px",
+                          background: "var(--color-background-success)",
+                          border: "1px solid var(--color-border-success)",
+                          borderRadius: "var(--border-radius-sm)",
+                          fontSize: 11, color: "var(--color-text-success)", fontWeight: 500,
+                        }}>
+                          {icons.check}
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {uploaded.name}
+                          </span>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
 
-          <div style={{
-            background: "var(--color-background-primary)",
-            border: "1px solid var(--color-border-primary)",
-            borderRadius: "var(--border-radius-xl)",
-            padding: "3rem 2rem",
-            textAlign: "center",
-            marginTop: "1rem",
-            boxShadow: "var(--shadow-md)",
-            position: "relative",
-            overflow: "hidden",
-          }}>
-            {/* Accent bar */}
-            <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: active.accent }} />
+                {/* Stats */}
+                {connected && count !== null && (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 5,
+                    fontSize: 11, color: "var(--color-text-tertiary)",
+                    margin: "10px 0 0",
+                    paddingTop: 8,
+                    borderTop: "1px solid var(--color-border-primary)",
+                  }}>
+                    {icons.database}
+                    <span>{count} {action.statLabel}</span>
+                  </div>
+                )}
+              </div>
 
-            {/* Step badge */}
-            <div style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              fontSize: 12,
-              fontWeight: 600,
-              color: active.accent,
-              background: active.accentLight,
-              padding: "4px 14px",
-              borderRadius: 99,
-              marginBottom: 16,
-              textTransform: "uppercase",
-              letterSpacing: "0.05em",
-            }}>
-              Step {active.step}
-            </div>
+              {/* Horizontal arrow (desktop) */}
+              {!isLast && (
+                <div className="pipeline-arrow-h" style={{ display: "flex", alignItems: "center", padding: "0 6px", flexShrink: 0 }}>
+                  <StepArrow />
+                </div>
+              )}
 
-            {/* Large icon */}
-            <div style={{
-              width: 64, height: 64,
-              borderRadius: "var(--border-radius-lg)",
-              background: active.accentLight,
-              color: active.accent,
-              display: "inline-flex", alignItems: "center", justifyContent: "center",
-              marginBottom: 20,
-            }}>
-              <div style={{ transform: "scale(1.5)" }}>{active.icon}</div>
-            </div>
-
-            <p style={{ fontSize: 20, fontWeight: 700, margin: "0 0 4px", color: "var(--color-text-primary)", letterSpacing: "-0.01em" }}>
-              {active.title}
-            </p>
-
-            <p style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-tertiary)", margin: "0 0 16px", textTransform: "uppercase", letterSpacing: "0.03em" }}>
-              Owner: {active.owner}
-            </p>
-
-            <div style={{
-              fontSize: 14, color: "var(--color-text-secondary)",
-              margin: "0 auto 24px", maxWidth: 500, lineHeight: 1.7,
-              textAlign: "left",
-            }}>
-              {active.descriptionJSX ? (
-                <StartCampaignDesc />
-              ) : (
-                active.description.map((line, j) => (
-                  <div key={j} style={{ marginBottom: j < active.description.length - 1 ? 2 : 0 }}>{line}</div>
-                ))
+              {/* Vertical arrow (mobile) */}
+              {!isLast && (
+                <div className="pipeline-arrow-v" style={{ display: "none", justifyContent: "center", padding: "6px 0", transform: "rotate(90deg)" }}>
+                  <StepArrow />
+                </div>
               )}
             </div>
+          );
+        })}
+      </div>
 
-            {connected && stats[active.statKey] !== null && (
-              <div style={{
-                display: "inline-flex", alignItems: "center", gap: 6,
-                fontSize: 14, fontWeight: 600, color: active.accent,
-                background: active.accentLight,
-                padding: "6px 16px", borderRadius: 99,
-                marginBottom: 20,
-              }}>
-                {icons.database}
-                {stats[active.statKey]} {active.statLabel}
-              </div>
-            )}
-
-            <div style={{
-              display: "inline-block",
-              fontSize: 12, fontWeight: 500,
-              color: "var(--color-text-tertiary)",
-              background: "var(--color-background-secondary)",
-              padding: "6px 14px", borderRadius: 99,
-            }}>
-              Coming soon — under development
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Cycle arrow: step 4 → step 1 */}
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        marginTop: 20,
+        color: "var(--color-text-tertiary)",
+        fontSize: 12,
+        animation: "fadeIn 0.6s ease 0.3s both",
+      }}>
+        {icons.arrowCurve}
+        <span>Cycle repeats — updated contacts feed back into the next campaign</span>
+      </div>
 
       {/* ── Footer ── */}
       <div style={{
